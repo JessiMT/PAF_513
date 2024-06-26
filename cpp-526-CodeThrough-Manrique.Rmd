@@ -1,0 +1,336 @@
+---
+title: "Exploring the Denver Crime Open Source Catalog"
+author: "Jessica Manrique"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document:
+    theme: lumen
+    df_print: paged
+    highlight: tango
+    toc: yes
+    toc_float: yes
+---
+
+```{r include = FALSE}
+
+# SET GLOBAL KNITR OPTIONS
+
+knitr::opts_chunk$set(echo = TRUE, 
+                      message = FALSE, 
+                      warning = FALSE, 
+                      fig.width = 10, 
+                      fig.height = 8)
+
+
+
+# LOAD PACKAGES
+
+library(pander)
+library(kableExtra)
+library(dplyr)
+library(leaflet)
+library(sf)
+library(utils)
+
+```
+
+<br>
+<br>
+
+# Introduction
+
+The Denver Police Department's Data Analysis Unit has made public data available on criminal offenses in the City and County of Denver from 2010 to 2021. This dataset encompasses information on various criminal offenses, compiled according to the National Incident Based Reporting System (NIBRS). It is a dynamic dataset continually updated to reflect new incidents and investigative outcomes. Certain details, such as those pertaining to sexual assaults, child abuse, crimes involving juveniles, and other sensitive incidents, have been excluded in compliance with legal regulations. Additionally, the addresses provided are approximate locations rather than exact crime addresses. (City and County of Denver, 2024)
+
+This walkthrough will provide an overview of the dataset and illustrate examples of its potential applications in visualization and research.
+
+You can access this dataset through the City and County of Denver's website: [Denver Open Source Catalog](https://www.denvergov.org/opendata/dataset/city-and-county-of-denver-crime)
+
+<br>
+
+## Content Overview
+
+Using this dataset, this walkthrough will cover the following topics:
+
+* An overview of the crime dataset for 2021.
+* Basic code examples for understanding the dataset using the **dplyr** package.
+* Examples on how to merge different datasets on the Open Source Catalog.
+* Examples of geographical visualization using the **leaftlet** package.
+
+<br>
+
+## Why You Should Care
+
+Cities across the US are initiating efforts to provide open-source data to enhance research and transparency. In line with these initiatives, police departments and other law enforcement agencies are making their data publicly available in formats that are convenient for analysis.
+
+It is crucial for the public to be aware of the existence of such open-source data. Increased transparency and public participation can highlight the importance for other agencies to adopt open-source formats.
+
+Analyzing crime data helps the public gain a more accurate understanding of public safety in their communities. This code-through aims to provide a basic guide on how to utilize open-source data for analysis.
+
+<br>
+
+## Learning Objectives
+
+* Utilize and become familiar with governmental open-source datasets.
+* Navigate datasets using data wrangling techniques.
+* Visualize datasets using mapping tools.
+
+<br>
+<br>
+
+# Denver Crime Open Source Dataset
+
+## Necessary Packages
+
+This walkthrough requires the following packages:
+
+* **dplyr**: Tools for data wrangling.
+* **leaflet**: Visualization of data on maps.
+  
+The Denver Police Department dataset can be downloaded from the City and County website. There is one CSV file for each year from 2010 to 2021, which can be imported into RStudio using the **read.csv()** function.
+
+This walkthrough will focus on analyzing the dataset for the year 2021 and the associated offense code document.
+
+```{r}
+
+#Load Dataset
+
+url <- "https://www.denvergov.org/media/gis/DataCatalog/crime/csv/crime2021.csv" 
+
+denver_crime <- read.csv(url)
+
+```
+
+
+<br>
+
+## Description of the Dataset
+
+Here is a preview of the first 25 entries in this dataset.
+
+```{r}
+denver_crime %>% 
+  head(25)
+```
+<br>
+We can use the **dim()** function to check the number of variables in this dataset. This function reveals that the dataset contains 72,954 rows and 20 columns.
+
+```{r}
+
+dim( denver_crime )
+
+```
+
+
+As observed, this dataset contains the following information:
+
+* Offense ID and code
+* Offense type and category
+* First and last date of occurrence
+* Reported date
+* Address of the incident (approximate)
+* Geographical coordinates
+* Name of neighborhood and district ID
+* Whether the incident is criminal or related to traffic
+* Number of victims
+
+Some variables in this dataset, such as offense code and district ID, reference additional datasets available on the Open Source Catalog. 
+
+<br>
+
+## Basic Example
+
+With the **dplyr** package, it is possible to conduct basic analyses on this dataset, which can provide valuable information for further exploration. For instance, we can obtain a unique list of all offense categories from this dataset using the **distinct()** function:
+
+```{r}
+
+denver_crime %>% 
+  distinct(offense_category_id)
+
+```
+<br>
+
+We could filter the offense types under the offense category "Other Crimes Against Persons" to clarify a variable:
+
+```{r}
+
+denver_crime %>% 
+  group_by(offense_type_id) %>% 
+  filter( offense_category_id == "other-crimes-against-persons") %>% 
+  select(offense_type_id, offense_category_id) %>% 
+  distinct()
+
+```
+
+<br>
+
+We can see which types of offenses have the highest number of victims:
+
+```{r}
+
+denver_crime %>%
+  group_by(offense_category_id) %>% 
+  arrange(desc(victim_count)) %>% 
+  select(offense_type_id, offense_category_id, victim_count) %>% 
+  head(10)
+  
+```
+
+<br>
+
+## Advanced Examples
+
+### Merging Datasets
+
+Since this dataset references other datasets from the Open Source Catalog for certain variables such as district ID and offense code, we will need to merge two datasets to obtain additional information for a specific variable.
+
+Let's clarify what the "weapon-fire-into-occ-bldg" variable means, as it had the highest victim count.
+
+First, we need to download the offense_codes file:
+
+
+```{r}
+
+url <- "https://www.denvergov.org/media/gis/DataCatalog/crime/csv/offense_codes.csv"
+
+offense_codes <- read.csv(url)
+
+```
+
+<br>
+
+This offense_code dataset contains the following variables:
+
+```{r}
+
+offense_codes %>% 
+  head(10)
+
+```
+
+<br>
+
+The **dplyr** package allows us to analyze two datasets using join functions. Since there are multiple columns that match between the denver_crime dataset and the offense_codes dataset, we will need to create a compound ID to match the variables associated with "weapon-fire-into-occ-bldg".
+
+In this case, we will merge the datasets by the following variables: offense_code, offense_code_extension, offense_type_id, and offense_category_id. Since the offense_codes dataset has all variables in capital letters, we will first rename these variables and then perform an **inner_join()** function:
+
+```{r}
+
+# Rename columns in offense_codes to match denver_crime
+offense_codes <- offense_codes %>%
+  rename(
+    offense_code = OFFENSE_CODE,
+    offense_code_extension = OFFENSE_CODE_EXTENSION,
+    offense_type_id = OFFENSE_TYPE_ID,
+    offense_category_id = OFFENSE_CATEGORY_ID )
+
+# Perform the inner join
+denver_crime %>% 
+  inner_join(offense_codes, by = c("offense_code", "offense_code_extension", "offense_type_id", "offense_category_id")) %>%
+  filter(offense_type_id == "weapon-fire-into-occ-bldg") %>% 
+  select( "offense_code", "offense_code_extension", "OFFENSE_TYPE_NAME", "OFFENSE_CATEGORY_NAME") %>%
+  head(1)
+
+```
+<br>
+
+### Mapping the Dataset
+
+Mapping has been a common tool in crime analysis to visualize crime data and perform further analysis, such as identifying hotspots and patterns over time. Since the **denver_crime** dataset provides geographical coordinates, using packages such as **leaflet** makes it possible to visualize some of this data on a map of Denver.
+
+First, let's download an empty map of downtown Denver:
+
+```{r}
+
+# Provide coordinates for downtown Denver
+denverdowntown_lng <- -104.9903
+denverdowntown_lat <- 39.7392
+
+# Visualize map centered on downtown Denver
+denverdowntown_map <- leaflet() %>%
+  setView(lng = denverdowntown_lng, lat = denverdowntown_lat, zoom = 14) %>%
+  addProviderTiles("CartoDB.Positron")
+
+denverdowntown_map
+
+```
+<br>
+
+For this example, let's visualize the stolen motor vehicles reported in the winter months (October to December 2021). Note that in this case, we are just looking at the date when the incidents were reported rather than the actual date of the incident.
+
+Since the format of the original dataset is in m/d/yyyy (e.g., 7/1/2021), we will need to adjust the date format to a suitable format for R:
+
+```{r}
+
+# Adjust the date format 
+denver_crime$reported_date <- as.Date(denver_crime$reported_date, format = "%m/%d/%Y")
+
+# Define approximate coordinates for downtown Denver
+min_lon <- -105.0100
+max_lon <- -104.9700
+min_lat <- 39.7200
+max_lat <- 39.7600
+
+# Filter the data within downtown Denver
+winter_stolen_cars <- denver_crime %>% 
+  filter(offense_type_id == "theft-of-motor-vehicle" &
+           reported_date >= as.Date("2021-10-01", format = "%Y-%m-%d") &
+           reported_date <= as.Date("2021-12-31", format = "%Y-%m-%d") &
+           geo_lon >= min_lon & geo_lon <= max_lon &
+           geo_lat >= min_lat & geo_lat <= max_lat)
+
+winter_stolen_cars
+
+```
+<br>
+
+Once the data has been filtered, using the **leaflet** package, we can now visualize the "winter stolen cars" data. We can also include a popup box for each data point that shows the neighborhood and the date when the incident was reported.
+
+```{r}
+  
+denverdowntown_lng <- -104.9903
+denverdowntown_lat <- 39.7392
+
+# Visualize map centered on downtown Denver
+denverdowntown_map <- leaflet(winter_stolen_cars) %>%
+  setView(lng = denverdowntown_lng, lat = denverdowntown_lat, zoom = 14) %>%
+  addProviderTiles("CartoDB.Positron") %>% 
+  addCircles(lng = winter_stolen_cars$geo_lon, lat = winter_stolen_cars$geo_lat,
+             popup = ~paste("Neighborhood:", neighborhood_id, "<br>",
+                            "Date:", reported_date))
+
+denverdowntown_map
+
+```
+
+<br> 
+<br>
+
+# Further Resources
+
+Learn more about this dataset and additional tools for analyzing crime data with the following resources and examples:
+
+<br>
+
+* [Denver Open Source Catalog](https://www.denvergov.org/opendata/dataset/city-and-county-of-denver-crime)
+
+* [Leaflet Package in R](https://www.geeksforgeeks.org/leaflet-package-in-r/)
+
+* [Crime Mapping and Spatial Data Analysis using R](https://maczokni.github.io/crime_mapping/producing-your-first-crime-map.html)
+
+* [Using R for Crime Analysis](https://wetlands.io/maps/Crime-Analysis-Using-R.html)
+
+* [Crime Point Data Analysis in R](https://michaelminn.net/tutorials/r-crime/index.html)
+
+<br>
+<br>
+
+# Works Cited
+
+This code through references and cites the following sources:
+
+<br>
+
+* City and County of Denver, Denver Police Department/Data Analysis Unit (Last updated 6/21/2024). [Open Data Catalog](https://www.denvergov.org/opendata/dataset/city-and-county-of-denver-crime)
+
+<br>
+<br>
